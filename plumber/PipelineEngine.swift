@@ -18,7 +18,7 @@ struct PipelineEngine {
 
             for pipeline in relevantPipelines {
                 if await execute(pipeline: pipeline, on: fileURL) {
-                    await logger.log(fileName: fileURL.lastPathComponent, message: "Pipeline '\(pipeline.name)' completed action.", status: .info)
+                    await logger.log(fileName: fileURL.lastPathComponent, message: "Pipeline '\(pipeline.name)' completed.", status: .success)
                     break
                 }
             }
@@ -54,6 +54,7 @@ struct PipelineEngine {
                         currentURL = newURL
                         fileWasProcessed = true
                     } else {
+                        // If an action fails, we stop processing this pipeline for this file.
                         return fileWasProcessed
                     }
                 }
@@ -62,6 +63,7 @@ struct PipelineEngine {
         return fileWasProcessed
     }
     
+    // --- (fileMatchesCondition function remains the same) ---
     private func fileMatchesCondition(_ fileURL: URL, condition: Condition) async -> Bool {
         let resourceValues = try? fileURL.resourceValues(forKeys: [.creationDateKey, .totalFileSizeKey, .contentTypeKey])
         
@@ -70,25 +72,25 @@ struct PipelineEngine {
             guard !requiredExtensions.isEmpty, let firstExt = requiredExtensions.first, !firstExt.isEmpty else { return false }
             let fileExtension = fileURL.pathExtension.lowercased()
             let result = requiredExtensions.contains { $0.lowercased().trimmingCharacters(in: .whitespaces) == fileExtension }
-            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Extension '\(fileExtension)' not in list.", status: .info) }
+            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Extension '\(fileExtension)' not in [\(requiredExtensions.joined(separator: ", "))].", status: .info) }
             return result
             
         case .nameContains(let keyword):
             guard !keyword.isEmpty else { return false }
             let result = fileURL.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(keyword)
-            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Name does not contain '\(keyword)'.", status: .info) }
+            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Name does not contain '\(keyword)'.", status: .info) }
             return result
             
         case .nameBeginsWith(let prefix):
             guard !prefix.isEmpty else { return false }
             let result = fileURL.deletingPathExtension().lastPathComponent.hasPrefix(prefix)
-            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Name does not begin with '\(prefix)'.", status: .info) }
+            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Name does not begin with '\(prefix)'.", status: .info) }
             return result
 
         case .nameEndsWith(let suffix):
             guard !suffix.isEmpty else { return false }
             let result = fileURL.deletingPathExtension().lastPathComponent.hasSuffix(suffix)
-            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Name does not end with '\(suffix)'.", status: .info) }
+            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Name does not end with '\(suffix)'.", status: .info) }
             return result
             
         case .kindIs(let kind):
@@ -100,20 +102,20 @@ struct PipelineEngine {
                 await logger.log(fileName: fileURL.lastPathComponent, message: "Matched kind by extension fallback.", status: .info)
                 return true
             }
-            await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Kind is not '\(kind.rawValue)'.", status: .info)
+            await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Kind is not '\(kind.rawValue)'.", status: .info)
             return false
 
         case .dateAdded(let days):
             guard let creationDate = resourceValues?.creationDate else {
-                await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Could not read creation date.", status: .info); return false
+                await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Could not read creation date.", status: .info); return false
             }
             let result = Calendar.current.isDateInLast(days, a: creationDate)
-            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Date added not within last \(days) days.", status: .info) }
+            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Date added not within last \(days) days.", status: .info) }
             return result
             
         case .sizeIs(let sizeInMB, let comparison):
             guard let sizeInBytes = resourceValues?.totalFileSize else {
-                await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Could not read file size.", status: .info); return false
+                await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Could not read file size.", status: .info); return false
             }
             let size = Double(sizeInBytes) / 1_000_000.0
             let result: Bool
@@ -121,11 +123,12 @@ struct PipelineEngine {
             case .greaterThan: result = size > sizeInMB
             case .lessThan: result = size < sizeInMB
             }
-            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Failed: Size not \(comparison.rawValue) \(sizeInMB)MB.", status: .info) }
+            if !result { await logger.log(fileName: fileURL.lastPathComponent, message: "Condition failed: Size not \(comparison.rawValue) \(sizeInMB)MB.", status: .info) }
             return result
         }
     }
     
+    // --- (perform function remains the same) ---
     private func perform(action: ActionStep, on fileURL: URL) async -> URL? {
         switch action.type {
         case .moveToFolder:
@@ -148,6 +151,7 @@ struct PipelineEngine {
         }
     }
 
+    // --- (expand function remains the same) ---
     private func expand(pattern: String, for fileURL: URL) -> String {
         let fileName = fileURL.deletingPathExtension().lastPathComponent
         let fileExtension = fileURL.pathExtension
@@ -163,16 +167,32 @@ struct PipelineEngine {
         result = result.replacingOccurrences(of: "{date}", with: dateString)
         return result
     }
-    
+
+    // --- NEW: A robust function to handle file name collisions ---
+    private func getAvailableURL(for fileURL: URL, in destinationFolderURL: URL) -> URL {
+        let fileManager = FileManager.default
+        let originalName = fileURL.deletingPathExtension().lastPathComponent
+        let fileExtension = fileURL.pathExtension
+        
+        var finalURL = destinationFolderURL.appendingPathComponent(fileURL.lastPathComponent)
+        var counter = 1
+        
+        while fileManager.fileExists(atPath: finalURL.path) {
+            let newName = "\(originalName) \(counter).\(fileExtension)"
+            finalURL = destinationFolderURL.appendingPathComponent(newName)
+            counter += 1
+        }
+        return finalURL
+    }
+
     private func moveItem(from sourceURL: URL, to destinationFolderURL: URL) async -> URL? {
         let fileManager = FileManager.default
-        var destinationURL: URL?
         do {
             try fileManager.createDirectory(at: destinationFolderURL, withIntermediateDirectories: true, attributes: nil)
-            destinationURL = destinationFolderURL.appendingPathComponent(sourceURL.lastPathComponent)
-            guard let destinationURL = destinationURL else { throw NSError(domain: "PlumberError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not create destination URL."]) }
+            // --- FIX: Use our new function to prevent overwriting files ---
+            let destinationURL = getAvailableURL(for: sourceURL, in: destinationFolderURL)
             try fileManager.moveItem(at: sourceURL, to: destinationURL)
-            await logger.log(fileName: sourceURL.lastPathComponent, message: "Moved to \(destinationFolderURL.lastPathComponent)", status: .success)
+            await logger.log(fileName: sourceURL.lastPathComponent, message: "Moved to \(destinationFolderURL.lastPathComponent) as \(destinationURL.lastPathComponent)", status: .success)
             return destinationURL
         } catch {
             await logger.log(fileName: sourceURL.lastPathComponent, message: "Failed to move: \(error.localizedDescription)", status: .failure)
@@ -182,20 +202,20 @@ struct PipelineEngine {
     
     private func copyItem(from sourceURL: URL, to destinationFolderURL: URL) async -> URL? {
         let fileManager = FileManager.default
-        var destinationURL: URL?
         do {
             try fileManager.createDirectory(at: destinationFolderURL, withIntermediateDirectories: true, attributes: nil)
-            destinationURL = destinationFolderURL.appendingPathComponent(sourceURL.lastPathComponent)
-            guard let destinationURL = destinationURL else { throw NSError(domain: "PlumberError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not create destination URL."]) }
+            // --- FIX: Use our new function here as well ---
+            let destinationURL = getAvailableURL(for: sourceURL, in: destinationFolderURL)
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
-            await logger.log(fileName: sourceURL.lastPathComponent, message: "Copied to \(destinationFolderURL.lastPathComponent)", status: .success)
-            return sourceURL
+            await logger.log(fileName: sourceURL.lastPathComponent, message: "Copied to \(destinationFolderURL.lastPathComponent) as \(destinationURL.lastPathComponent)", status: .success)
+            return sourceURL // Return the original URL as the file hasn't moved
         } catch {
             await logger.log(fileName: sourceURL.lastPathComponent, message: "Failed to copy: \(error.localizedDescription)", status: .failure)
             return nil
         }
     }
     
+    // --- (renameItem, addTags, runScript functions remain the same) ---
     private func renameItem(at sourceURL: URL, to newName: String) async -> URL? {
         let fileManager = FileManager.default
         let destinationURL = sourceURL.deletingLastPathComponent().appendingPathComponent(newName)
