@@ -6,7 +6,7 @@ class DashboardViewModel: ObservableObject {
     @Published var recentEvents: [FileEvent] = []
 
     // This function now correctly accepts a Workflow object
-    func logEvent(fileName: String, workflow: Workflow) {
+    func logEvent(fileName: String, workflow: Pipeline) {
         if recentEvents.count > 10 {
             recentEvents.removeFirst()
         }

@@ -8,7 +8,7 @@ struct FileEvent: Identifiable, Equatable {
     
     // --- THIS IS THE FIX ---
     // The event is now associated with a Workflow, not a Rule.
-    let workflowApplied: Workflow?
+    let workflowApplied: Pipeline?
     
     var status: Status = .pending
     

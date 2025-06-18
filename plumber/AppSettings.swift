@@ -1,19 +1,20 @@
-//
-//  Appearance.swift
-//  plumber
-//
-//  Created by Harsh Shah on 6/16/25.
-//
-
-
+// AppSettings.swift
 import Foundation
 import SwiftUI
 
 enum Appearance: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: Self { self }
+    
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .light: return .light
+        case .dark: return .dark
+        case .system: return nil
+        }
+    }
 }
 
 class AppSettings: ObservableObject {
-    @Published var appearance: Appearance = .system
+    @AppStorage("appearance") var appearance: Appearance = .system
 }

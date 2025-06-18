@@ -2,11 +2,11 @@ import Foundation
 import AppKit
 import UniformTypeIdentifiers
 
-struct WorkflowEngine {
+struct PipelineEngine {
     
     private let logger = EventLogService.shared
 
-    func processFolder(at folderURL: URL, with workflows: [Workflow]) async {
+    func processFolder(at folderURL: URL, with pipelines: [Pipeline]) async {
         let fileManager = FileManager.default
         let resourceKeys: [URLResourceKey] = [.creationDateKey, .totalFileSizeKey, .contentTypeKey]
         guard let files = try? fileManager.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: resourceKeys, options: .skipsHiddenFiles) else { return }
@@ -14,39 +14,36 @@ struct WorkflowEngine {
         for fileURL in files where !fileURL.hasDirectoryPath {
             await logger.log(fileName: fileURL.lastPathComponent, message: "Detected in \(folderURL.lastPathComponent)", status: .info)
             
-            // --- THIS IS THE FIX ---
-            // 1. Find ALL workflows that monitor this folder, not just the first one.
-            let relevantWorkflows = workflows.filter { $0.isEnabled && $0.sourceFolderPaths.contains(folderURL.path) }
+            let relevantPipelines = pipelines.filter { $0.isEnabled && $0.intakePaths.contains(folderURL.path) }
 
-            // 2. Iterate through each relevant workflow until one successfully processes the file.
-            for workflow in relevantWorkflows {
-                if await execute(workflow: workflow, on: fileURL) {
-                    // If a workflow successfully acted on the file, we stop processing it further.
-                    await logger.log(fileName: fileURL.lastPathComponent, message: "Workflow '\(workflow.name)' completed action.", status: .info)
-                    break // Exit the workflow loop for this file.
+            for pipeline in relevantPipelines {
+                if await execute(pipeline: pipeline, on: fileURL) {
+                    await logger.log(fileName: fileURL.lastPathComponent, message: "Pipeline '\(pipeline.name)' completed action.", status: .info)
+                    break
                 }
             }
         }
     }
 
-    /// Executes a workflow on a given file and returns `true` if any action was successfully performed.
-    private func execute(workflow: Workflow, on fileURL: URL) async -> Bool {
+    private func execute(pipeline: Pipeline, on fileURL: URL) async -> Bool {
         var fileWasProcessed = false
         var currentURL = fileURL
         
         let shouldStopAccessing = currentURL.startAccessingSecurityScopedResource()
         defer { if shouldStopAccessing { currentURL.stopAccessingSecurityScopedResource() } }
         
-        for rule in workflow.rules {
-            if await fileMatchesCondition(currentURL, condition: rule.condition) {
-                await logger.log(fileName: currentURL.lastPathComponent, message: "✅ Matched rule '\(rule.name)'", status: .success)
+        await logger.log(fileName: fileURL.lastPathComponent, message: "Testing against pipeline '\(pipeline.name)'...", status: .info)
+
+        for valve in pipeline.valves {
+            if await fileMatchesCondition(currentURL, condition: valve.condition) {
+                await logger.log(fileName: currentURL.lastPathComponent, message: "✅ Matched valve '\(valve.name)'", status: .success)
                 
-                if rule.actions.isEmpty {
+                if valve.actions.isEmpty {
                     fileWasProcessed = true
                     continue
                 }
 
-                for action in rule.actions {
+                for action in valve.actions {
                     let destinationPath = action.parameters["path"] ?? ""
                     let destinationURL = URL(fileURLWithPath: destinationPath)
                     
@@ -57,7 +54,7 @@ struct WorkflowEngine {
                         currentURL = newURL
                         fileWasProcessed = true
                     } else {
-                        return fileWasProcessed // Action failed, return current status
+                        return fileWasProcessed
                     }
                 }
             }
@@ -65,7 +62,7 @@ struct WorkflowEngine {
         return fileWasProcessed
     }
     
-    private func fileMatchesCondition(_ fileURL: URL, condition: RuleCondition) async -> Bool {
+    private func fileMatchesCondition(_ fileURL: URL, condition: Condition) async -> Bool {
         let resourceValues = try? fileURL.resourceValues(forKeys: [.creationDateKey, .totalFileSizeKey, .contentTypeKey])
         
         switch condition {

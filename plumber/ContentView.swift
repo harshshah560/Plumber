@@ -1,31 +1,36 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var workflowStore = WorkflowStore()
+    @StateObject private var pipelineStore = PipelineStore()
     @StateObject private var monitoringService = MonitoringService()
-    @StateObject private var settings = AppSettings()
+    @StateObject private var eventLog = EventLogService.shared
 
     var body: some View {
         NavigationSplitView {
             List {
-                NavigationLink(destination: WorkflowListView()) {
-                    Label("Workflows", systemImage: "arrow.right.square")
+                NavigationLink {
+                    DashboardView()
+                } label: {
+                    Label("Dashboard", systemImage: "flowchart.fill")
                 }
-                NavigationLink(destination: SettingsView()) {
-                    Label("Settings", systemImage: "gear")
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Label("Settings", systemImage: "gearshape.2.fill")
                 }
             }
             .listStyle(.sidebar)
         } detail: {
-            Text("Welcome to Plumber. Select 'Workflows' to begin.")
-                .font(.largeTitle)
+            // --- FIX: More professional placeholder text ---
+            Text("Select an item from the sidebar")
+                .font(.title2)
                 .foregroundColor(.secondary)
         }
-        .environmentObject(workflowStore)
-        .environmentObject(settings)
+        .environmentObject(pipelineStore)
+        .environmentObject(eventLog)
         .onAppear {
-            // Tell the monitoring service to start observing our workflows
-            monitoringService.start(with: workflowStore)
+            _ = FolderAccessManager.restoreAllAccess()
+            monitoringService.start(with: pipelineStore)
         }
     }
 }
