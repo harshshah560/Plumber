@@ -1,24 +1,31 @@
-//
-//  ContentView.swift
-//  plumber
-//
-//  Created by Harsh Shah on 6/16/25.
-//
-
 import SwiftUI
 
 struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
-    }
-}
+    @StateObject private var workflowStore = WorkflowStore()
+    @StateObject private var monitoringService = MonitoringService()
+    @StateObject private var settings = AppSettings()
 
-#Preview {
-    ContentView()
+    var body: some View {
+        NavigationSplitView {
+            List {
+                NavigationLink(destination: WorkflowListView()) {
+                    Label("Workflows", systemImage: "arrow.right.square")
+                }
+                NavigationLink(destination: SettingsView()) {
+                    Label("Settings", systemImage: "gear")
+                }
+            }
+            .listStyle(.sidebar)
+        } detail: {
+            Text("Welcome to Plumber. Select 'Workflows' to begin.")
+                .font(.largeTitle)
+                .foregroundColor(.secondary)
+        }
+        .environmentObject(workflowStore)
+        .environmentObject(settings)
+        .onAppear {
+            // Tell the monitoring service to start observing our workflows
+            monitoringService.start(with: workflowStore)
+        }
+    }
 }
